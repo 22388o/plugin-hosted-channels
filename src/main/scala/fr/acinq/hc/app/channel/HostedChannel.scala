@@ -218,12 +218,19 @@ class HostedChannel(kit: Kit, remoteNodeId: PublicKey, channelsDb: HostedChannel
       val data1 = data.copy(channelUpdate = update1)
 
       data1.channelAnnouncement match {
-        case None => stay StoringAndUsing data1 SendingHosted Tools.makePHCAnnouncementSignature(kit.nodeParams, data.commitments, shortChannelId, wantsReply = true)
-        case Some(announce) if force || data.shouldRebroadcastAnnounce => stay StoringAndUsing data1 Announcing announce Announcing update1
-        case _ => stay StoringAndUsing data1 Announcing update1
+        case None =>
+          log.info(s"PLGN PHC announce, no channelAnnouncement, sending signature, peer=$remoteNodeId")
+          stay StoringAndUsing data1 SendingHosted Tools.makePHCAnnouncementSignature(kit.nodeParams, data.commitments, shortChannelId, wantsReply = true)
+        case Some(announce) if force || data.shouldRebroadcastAnnounce =>
+          log.info(s"PLGN PHC announce, re-announcing with new update, peer=$remoteNodeId")
+          stay StoringAndUsing data1 Announcing announce Announcing update1
+        case _ =>
+          log.info(s"PLGN PHC announce, new update, peer=$remoteNodeId")
+          stay StoringAndUsing data1 Announcing update1
       }
 
     case Event(remoteSig: AnnouncementSignature, data: HC_DATA_ESTABLISHED) if data.commitments.announceChannel =>
+      log.info(s"PLGN PHC announce, got remote signature, peer=$remoteNodeId")
       val localSig = Tools.makePHCAnnouncementSignature(kit.nodeParams, data.commitments, shortChannelId, wantsReply = false)
       val announce = Tools.makePHCAnnouncement(kit.nodeParams, localSig, remoteSig, shortChannelId, remoteNodeId)
       val update1 = makeChannelUpdate(localLCSS = data.commitments.lastCrossSignedState, enable = true)
@@ -232,13 +239,13 @@ class HostedChannel(kit: Kit, remoteNodeId: PublicKey, channelsDb: HostedChannel
       val isSigOK = Announcements.checkSigs(announce)
 
       if (isSigOK && remoteSig.wantsReply) {
-        log.info(s"PLGN PHC, announcing PHC and sending sig reply, peer=$remoteNodeId")
+        log.info(s"PLGN PHC announce, broadcasting PHC and sending sig reply, peer=$remoteNodeId")
         stay StoringAndUsing data1 SendingHosted localSig Announcing announce Announcing data1.channelUpdate
       } else if (isSigOK) {
-        log.info(s"PLGN PHC, announcing PHC without sig reply, peer=$remoteNodeId")
+        log.info(s"PLGN PHC announce, broadcasting PHC without sig reply, peer=$remoteNodeId")
         stay StoringAndUsing data1 Announcing announce Announcing data1.channelUpdate
       } else {
-        log.info(s"PLGN PHC, announce sig check failed, peer=$remoteNodeId")
+        log.info(s"PLGN PHC announce, sig check failed, peer=$remoteNodeId")
         stay
       }
 
@@ -253,6 +260,7 @@ class HostedChannel(kit: Kit, remoteNodeId: PublicKey, channelsDb: HostedChannel
       else stay Receiving HC_CMD_PUBLIC(remoteNodeId, force = true)
 
     case Event(cmd: HC_CMD_PUBLIC, data: HC_DATA_ESTABLISHED) =>
+      log.info(s"PLGN PHC announce, making public, peer=$remoteNodeId")
       val data1 = data.modify(_.commitments.announceChannel).setTo(true).copy(channelAnnouncement = None)
       stay StoringAndUsing data1 replying CMDResSuccess(cmd) Receiving HostedChannel.SendAnnouncements(force = false)
 
@@ -433,11 +441,12 @@ class HostedChannel(kit: Kit, remoteNodeId: PublicKey, channelsDb: HostedChannel
 
           if (!d1.commitments.announceChannel) {
             connection sendRoutingMsg d1.channelUpdate
+            log.info(s"PLGN PHC announce, private channel, peer=$remoteNodeId")
           } else if (cfg.vals.hcParams lastUpdateDiffers d1.channelUpdate) {
-            log.info(s"PLGN PHC, re-broadcasting, params differ, peer=$remoteNodeId")
+            log.info(s"PLGN PHC announce, re-broadcasting, params differ, peer=$remoteNodeId")
             self ! HostedChannel.SendAnnouncements(force = false)
           } else if (d1.shouldBroadcastUpdateRightAway) {
-            log.info(s"PLGN PHC, re-broadcasting, last was long ago, peer=$remoteNodeId")
+            log.info(s"PLGN PHC announce, re-broadcasting, last was long ago, peer=$remoteNodeId")
             self ! HostedChannel.SendAnnouncements(force = false)
           }
 
